@@ -75,12 +75,11 @@ source:
 # (version, platform, variant) leg — there is no per-variant `tests:` axis and
 # none is needed.
 #
-# ⚠️ Pass 1 is LINUX ONLY (cost discipline: macOS minutes are 10x, Windows 2x).
-# The darwin/windows keys are declared-and-commented in BOTH variants; the
-# platforms are already live in ../mirror-base.yml, and a platform with no
-# matching `assets:` key never enters a version's resolved set, so those legs
-# self-skip until the keys are uncommented. Uncomment by hand — never with
-# `sed`, whose replacement side eats the `\\.` in these regexes.
+# All three OS families are live: linux (both libc flavours), darwin (both
+# arches) and windows/amd64. Upstream also ships windows/aarch64, but only for
+# majors 21 and 23 — 23 is not mirrored, so a single-major key would resolve to
+# 0 assets on every other version and be silently skipped; it is left out until
+# upstream ships it across the range.
 variants:
   - default: true
     assets:
@@ -92,14 +91,12 @@ variants:
         - "^OpenJDK\\d+U-jdk_aarch64_linux_hotspot_.+\\.tar\\.gz$"
       "linux/arm64+libc.musl":
         - "^OpenJDK\\d+U-jdk_aarch64_alpine-linux_hotspot_.+\\.tar\\.gz$"
-      # Pass 2 — darwin:
-      # darwin/amd64:
-      #   - "^OpenJDK\\d+U-jdk_x64_mac_hotspot_.+\\.tar\\.gz$"
-      # darwin/arm64:
-      #   - "^OpenJDK\\d+U-jdk_aarch64_mac_hotspot_.+\\.tar\\.gz$"
-      # Pass 3 — windows:
-      # windows/amd64:
-      #   - "^OpenJDK\\d+U-jdk_x64_windows_hotspot_.+\\.zip$"
+      darwin/amd64:
+        - "^OpenJDK\\d+U-jdk_x64_mac_hotspot_.+\\.tar\\.gz$"
+      darwin/arm64:
+        - "^OpenJDK\\d+U-jdk_aarch64_mac_hotspot_.+\\.tar\\.gz$"
+      windows/amd64:
+        - "^OpenJDK\\d+U-jdk_x64_windows_hotspot_.+\\.zip$"
   - name: jre
     assets:
       "linux/amd64+libc.glibc":
@@ -110,14 +107,12 @@ variants:
         - "^OpenJDK\\d+U-jre_aarch64_linux_hotspot_.+\\.tar\\.gz$"
       "linux/arm64+libc.musl":
         - "^OpenJDK\\d+U-jre_aarch64_alpine-linux_hotspot_.+\\.tar\\.gz$"
-      # Pass 2 — darwin:
-      # darwin/amd64:
-      #   - "^OpenJDK\\d+U-jre_x64_mac_hotspot_.+\\.tar\\.gz$"
-      # darwin/arm64:
-      #   - "^OpenJDK\\d+U-jre_aarch64_mac_hotspot_.+\\.tar\\.gz$"
-      # Pass 3 — windows:
-      # windows/amd64:
-      #   - "^OpenJDK\\d+U-jre_x64_windows_hotspot_.+\\.zip$"
+      darwin/amd64:
+        - "^OpenJDK\\d+U-jre_x64_mac_hotspot_.+\\.tar\\.gz$"
+      darwin/arm64:
+        - "^OpenJDK\\d+U-jre_aarch64_mac_hotspot_.+\\.tar\\.gz$"
+      windows/amd64:
+        - "^OpenJDK\\d+U-jre_x64_windows_hotspot_.+\\.zip$"
 
 # Every archive — tarball and zip alike — wraps its content in a single
 # top-level directory (`jdk-21.0.12.1+1/` for the JDK, `…+1-jre/` for the JRE),
