@@ -1,0 +1,9 @@
+#:schema https://ocx.sh/schemas/project/v1.json
+[tools]
+cli = "ocx.sh/ocx/cli:0.6"
+mirror = "ocx.sh/ocx/mirror:0.6"
+# `uv` is the GENERATOR RUNTIME: temurin/mirror.yml is a `url_index` source
+# whose generator is a PEP 723 Python script. Namespaced coordinate only —
+# the flat `ocx.sh/uv:0` is forbidden (mirror-uv is slated for deletion and
+# that coordinate dies with the ocx.sh host).
+uv = "ocx.sh/astral-sh/uv:0"

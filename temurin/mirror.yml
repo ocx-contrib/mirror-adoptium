@@ -1,0 +1,190 @@
+extends: ../mirror-base.yml
+
+name: temurin
+
+# Logical index package `adoptium/temurin` lives at the physical path
+# `ghcr.io/ocx-contrib/adoptium/temurin` — slash segments, never
+# hyphen-flattened. The namespace names the distributor whose bytes we ship
+# (Eclipse Adoptium), not OpenJDK's author: these are Adoptium's builds and the
+# provenance belongs to them.
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/adoptium/temurin
+
+# Each Temurin major has its OWN upstream release repository
+# (`adoptium/temurin8-binaries` … `temurin26-binaries`), so a `github_release`
+# source would need one spec per major. scripts/generate.py reads the Adoptium
+# API instead, which aggregates every major, hands back a parsed `version_data`
+# block, and names the JDK and JRE archives of a release together.
+#
+# `command` resolves against THIS spec's directory, so the path is
+# `scripts/generate.py` and not `temurin/scripts/generate.py`.
+source:
+  type: url_index
+  generator:
+    command: ["uv", "run", "scripts/generate.py"]
+    timeout_seconds: 240
+
+# ─── libc gate (Phase 3.5) — the evidence, not the conclusion ───────────────
+#
+# Upstream ships a glibc Linux build and a SEPARATE musl (Alpine) build for
+# both Linux arches. Measured 2026-09-02 on `bin/java` extracted from the
+# 21.0.12.1+1 tarballs:
+#
+#   -jdk_x64_linux-            ELF x86-64, dynamically linked,
+#                              interpreter /lib64/ld-linux-x86-64.so.2
+#                              NEEDED libjli.so libpthread.so.0 libdl.so.2 libc.so.6
+#   -jre_x64_alpine-linux-     interpreter /lib/ld-musl-x86_64.so.1
+#                              NEEDED libjli.so libc.musl-x86_64.so.1
+#   -jre_aarch64_linux-        interpreter /lib/ld-linux-aarch64.so.1
+#   -jre_aarch64_alpine-linux- interpreter /lib/ld-musl-aarch64.so.1
+#
+# NEITHER is static — each names its own loader in PT_INTERP — so neither
+# covers the other, and both Linux keys carry an explicit libc feature. The
+# container legs in ../mirror-base.yml are what turn those claims into
+# evidence: the glibc keys get ubuntu+fedora and no alpine, the musl keys get
+# alpine and nothing else.
+#
+# Measured glibc floor, per arch (they come off different toolchains):
+# `readelf -V bin/java` → GLIBC_2.2.5 on x86_64, GLIBC_2.17 on aarch64.
+#
+# ─── Asset naming ───────────────────────────────────────────────────────────
+#
+#   OpenJDK<MAJOR>U-<image_type>_<arch>_<os>_hotspot_<version>.<tar.gz|zip>
+#
+# `alpine-linux` and `linux` are distinguished by the character BEFORE the
+# word: the glibc asset reads `_x64_linux_`, the musl one `_x64_alpine-linux_`.
+# The leading `_` in the pattern is therefore load-bearing — `x64_linux_`
+# without it matches both.
+#
+# The generator only ever emits the in-scope image types and platforms, so the
+# asset map holds no debugimage/testimage/staticlibs/sbom/sources names for
+# these patterns to accidentally match. The patterns stay anchored anyway.
+#
+# ─── Variants ───────────────────────────────────────────────────────────────
+#
+# Upstream ships a full JDK and a runtime-only JRE from the same release. They
+# are the same product at two surface sizes, not two products, so they are one
+# package on the variant axis rather than two packages:
+#
+#   jdk (default) → 21.0.12_01001         ~200 MB, 29 executables
+#   jre           → jre-21.0.12_01001      ~50 MB,  6 executables
+#
+# A variant folds into the VERSION axis, so `versions.new_per_run` below counts
+# variant-versions, and tests/smoke.star already runs once per
+# (version, platform, variant) leg — there is no per-variant `tests:` axis and
+# none is needed.
+#
+# ⚠️ Pass 1 is LINUX ONLY (cost discipline: macOS minutes are 10x, Windows 2x).
+# The darwin/windows keys are declared-and-commented in BOTH variants; the
+# platforms are already live in ../mirror-base.yml, and a platform with no
+# matching `assets:` key never enters a version's resolved set, so those legs
+# self-skip until the keys are uncommented. Uncomment by hand — never with
+# `sed`, whose replacement side eats the `\\.` in these regexes.
+variants:
+  - default: true
+    assets:
+      "linux/amd64+libc.glibc":
+        - "^OpenJDK\\d+U-jdk_x64_linux_hotspot_.+\\.tar\\.gz$"
+      "linux/amd64+libc.musl":
+        - "^OpenJDK\\d+U-jdk_x64_alpine-linux_hotspot_.+\\.tar\\.gz$"
+      "linux/arm64+libc.glibc":
+        - "^OpenJDK\\d+U-jdk_aarch64_linux_hotspot_.+\\.tar\\.gz$"
+      "linux/arm64+libc.musl":
+        - "^OpenJDK\\d+U-jdk_aarch64_alpine-linux_hotspot_.+\\.tar\\.gz$"
+      # Pass 2 — darwin:
+      # darwin/amd64:
+      #   - "^OpenJDK\\d+U-jdk_x64_mac_hotspot_.+\\.tar\\.gz$"
+      # darwin/arm64:
+      #   - "^OpenJDK\\d+U-jdk_aarch64_mac_hotspot_.+\\.tar\\.gz$"
+      # Pass 3 — windows:
+      # windows/amd64:
+      #   - "^OpenJDK\\d+U-jdk_x64_windows_hotspot_.+\\.zip$"
+  - name: jre
+    assets:
+      "linux/amd64+libc.glibc":
+        - "^OpenJDK\\d+U-jre_x64_linux_hotspot_.+\\.tar\\.gz$"
+      "linux/amd64+libc.musl":
+        - "^OpenJDK\\d+U-jre_x64_alpine-linux_hotspot_.+\\.tar\\.gz$"
+      "linux/arm64+libc.glibc":
+        - "^OpenJDK\\d+U-jre_aarch64_linux_hotspot_.+\\.tar\\.gz$"
+      "linux/arm64+libc.musl":
+        - "^OpenJDK\\d+U-jre_aarch64_alpine-linux_hotspot_.+\\.tar\\.gz$"
+      # Pass 2 — darwin:
+      # darwin/amd64:
+      #   - "^OpenJDK\\d+U-jre_x64_mac_hotspot_.+\\.tar\\.gz$"
+      # darwin/arm64:
+      #   - "^OpenJDK\\d+U-jre_aarch64_mac_hotspot_.+\\.tar\\.gz$"
+      # Pass 3 — windows:
+      # windows/amd64:
+      #   - "^OpenJDK\\d+U-jre_x64_windows_hotspot_.+\\.zip$"
+
+# Every archive — tarball and zip alike — wraps its content in a single
+# top-level directory (`jdk-21.0.12.1+1/` for the JDK, `…+1-jre/` for the JRE),
+# with `bin/` immediately inside it on Linux and Windows. Verified by
+# `tar tzf | cut -d/ -f1 | sort -u` on all four 21.0.12.1+1 archives.
+asset_type:
+  type: archive
+  strip_components: 1
+
+# Derive the `binaries` claim from each extracted bundle. This is the case the
+# flag exists for on two independent axes at once: the set is variant-dependent
+# (JDK 21 ships 29 executables, the JRE 6 — `java`, `jfr`, `jrunscript`,
+# `jwebserver`, `keytool`, `rmiregistry`) AND version-dependent (JDK 8 ships
+# `javah`/`policytool`, 11+ ship `jshell`/`jpackage`, 18+ `jwebserver`), and
+# this one spec publishes majors 8 through 26. A single hand-written list is
+# necessarily wrong for most of the matrix. `auto` is the honest spelling of
+# "derive it per bundle"; `verify` would demand exactly the list that cannot be
+# written down here.
+#
+# Both metadata files below point PATH at a real `${installPath}/<subdir>`
+# (`bin`, or `Contents/Home/bin` on macOS), which is what the load-time gate
+# requires — a bare `${installPath}` is exit 65.
+bin_scan: auto
+
+metadata:
+  default: metadata.json
+  platforms:
+    # macOS archives nest the runtime under Contents/Home, so bin lives at
+    # ${installPath}/Contents/Home/bin (verified on the 21.0.12.1+1 mac JRE).
+    # Declared now so pass 2 is a pure uncomment in `variants:` above.
+    darwin/amd64: metadata-darwin.json
+    darwin/arm64: metadata-darwin.json
+
+catalog:
+  # `catalog.*` resolves against THIS spec's directory and the default probe
+  # looks only there, so the repo-root logo must be named explicitly — a nested
+  # spec that omits this ships with no logo and no error.
+  logo: ../logo.svg
+
+# Which majors are mirrored is decided ONLY by `MAJORS` in
+# scripts/generate.py (8, 11, 17, 21, 25, 26), and each needs a `MAJOR_FLOORS`
+# entry there or it is dropped wholesale. No `versions.max` here: it would be a
+# second gate over the same decision, it is EXCLUSIVE, and a url_index version
+# outside the window is silently not resolved rather than reported.
+#
+# `min` stays: it is a real floor on the oldest major, not a per-major knob.
+versions:
+  min: "8.0.0"
+  # Counts VARIANT-versions: 3 upstream releases per run across both variants.
+  new_per_run: 6
+  # Hash-staggered off the hour — sha3_256("adoptium/temurin") % 360, via
+  # .claude/skills/create-mirror/scripts/poll_stagger.py. Never a hand-picked
+  # minute: fleet-synchronized crons tripped GHCR's secondary rate limit on
+  # 2026-08-04.
+  poll_interval: "21 1-23/6 * * *"
+
+tests:
+  # `script:` resolves from the REPOSITORY ROOT, not from this spec's own
+  # directory — the opposite of `metadata.*` and `catalog.*` above.
+  - name: smoke
+    script: temurin/tests/smoke.star
+
+annotations:
+  # The redistributed bytes are OpenJDK as built by Eclipse Adoptium. See
+  # NOTICE.md for the Corresponding Source pointer GPLv2 §3 requires.
+  org.opencontainers.image.licenses: "GPL-2.0-only WITH Classpath-exception-2.0"
+
+announce:
+  package: adoptium/temurin
+  fork: ocx-contrib/index

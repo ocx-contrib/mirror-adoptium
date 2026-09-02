@@ -1,0 +1,124 @@
+# Repo-wide policy for the Eclipse Adoptium runtimes mirrored here.
+#
+# NOT a spec: it has no name/target/source and is never loaded on its own.
+# Everything a package owns (name, target, source, variants, asset_type,
+# bin_scan, metadata, catalog, tests, versions, announce, annotations) stays in
+# that package's own file.
+#
+# ⚠️ `extends:` is a SHALLOW merge of top-level keys. A spec that sets a key
+# below replaces that block OUTRIGHT — there is no per-key merge. `platforms:`
+# is where this bites: it carries BOTH the runner matrix and the container
+# legs, so a child that restates it to tweak one runner silently drops every
+# `containers:` entry. Nothing reds — the legs simply stop existing, and every
+# os.features claim in that spec goes back to being merely asserted. Restate
+# `platforms:` IN FULL or not at all.
+
+skip_prereleases: true
+cascade: true
+
+# ─── build_timestamp: FORCED to `none`, not preferred ───────────────────────
+#
+# The fleet rule is `date`. It cannot apply here: this mirror's OCX versions
+# ALREADY carry build metadata. `jdk-21.0.12.1+1` maps to `21.0.12_01001`,
+# where `_01001` folds the OpenJDK patch and build components (see the version
+# scheme in temurin/scripts/generate.py). `normalize_version` refuses to
+# double-stamp a version that already has a build segment, and `plan` swallows
+# that as "skip this version" — so `date` here does not add a redundant stamp,
+# it empties the mirror:
+#
+#   WARN Skipping version 21.0.12_01001: version '21.0.12_01001' already has
+#        build metadata
+#   INFO Nothing to mirror
+#
+# The rule's intent is met anyway: upstream never re-releases a build number,
+# so the bare version tag is written exactly once and no consumer's `@sha256:`
+# pin is orphaned. Only the rolling cascade aliases move, which is inherent to
+# cascading and equally true under `date`.
+build_timestamp: none
+
+# No `verify:` block. `github_asset_digest` is a github_release-source option
+# and this repo's package is `url_index`. The Adoptium API does serve a
+# per-binary `checksum`, but there is no checksum MANIFEST asset to wire as
+# `checksums_file`. Downloads are HTTPS from the GitHub release CDN.
+
+concurrency:
+  # A JDK tarball is ~200 MB (the JRE ~50 MB) and each bundle re-compresses the
+  # whole tree. Same order of magnitude as mirror-amazon/corretto, whose limits
+  # these are, proven against an equivalent upstream.
+  max_downloads: 4
+  max_bundles: 2
+  max_pushes: 2
+  rate_limit_ms: 200
+  max_retries: 3
+  compression_threads: 0
+
+# ─── Platform matrix ────────────────────────────────────────────────────────
+#
+# Shared because Adoptium publishes the same shape for every Temurin major: a
+# glibc-linked Linux build and a SEPARATE musl-linked Alpine build per arch.
+# The libc measurement (file/readelf on the real `bin/java`) is recorded above
+# the `variants:` block in temurin/mirror.yml.
+#
+# ⚠️ `os.features` states what the artifact REQUIRES OF THE HOST, not how it
+# was built. Neither Linux build is static — each carries a PT_INTERP naming
+# its own loader — so neither covers the other and BOTH keys carry an explicit
+# libc feature:
+#
+#   - the linux build needs /lib64/ld-linux-x86-64.so.2 (x64) or
+#     /lib/ld-linux-aarch64.so.1 (arm64) → `+libc.glibc`
+#   - the alpine build needs /lib/ld-musl-<arch>.so.1     → `+libc.musl`
+#
+# Container legs follow from what each key CLAIMS, and are the only mechanism
+# that turns a claim into evidence:
+#   - `+libc.glibc` → ubuntu + fedora, NO alpine. The glibc build cannot load
+#     under musl, so an alpine leg would red on a correct artifact.
+#   - `+libc.musl`  → alpine only. Same reasoning mirrored.
+#
+# Measured glibc floor is asymmetric across arches and both images clear it:
+# GLIBC_2.2.5 on x86_64, GLIBC_2.17 on aarch64 (21.0.12.1+1 `bin/java`).
+platforms:
+  "linux/amd64+libc.glibc":
+    runner: ubuntu-latest
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  "linux/amd64+libc.musl":
+    runner: ubuntu-latest
+    containers:
+      - { image: "alpine:3.20", shell: sh }
+  "linux/arm64+libc.glibc":
+    # arm64 container legs run natively — no qemu — so the runner arch must
+    # match the platform or the renderer's guard reds the leg up front.
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  "linux/arm64+libc.musl":
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "alpine:3.20", shell: sh }
+  darwin/amd64:
+    # Intel slice tested on the arm64 macos-14 runner via Rosetta 2 (GitHub's
+    # macos-13 Intel pool is exhausted and deadlocks the push job).
+    runner: macos-14
+    prefix: ["arch", "-x86_64"]
+  darwin/arm64:
+    runner: macos-14
+    shell: bash
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+  # No `containers:` on darwin or windows — those runners have no Linux
+  # container engine, and the key is rejected at spec load.
+  #
+  # No `windows/arm64`. Upstream ships it for exactly one major in the mirrored
+  # set (21; also 23, which is EOL and out of scope) and for no other — so a
+  # declared key would resolve on one line and be absent everywhere else.
+  # Revisit when 25 or 26 starts shipping it:
+  #   curl -s 'https://api.adoptium.net/v3/assets/latest/25/hotspot?vendor=eclipse' \
+  #     | jq -r '.[].binary | select(.os=="windows") | .architecture' | sort -u
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK
+    user_id: "227748867204972545"  # pinged in-message on failures
