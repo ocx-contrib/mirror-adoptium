@@ -30,12 +30,22 @@ KEYTOOL = "keytool" + EXE
 # script cannot catch it. Every check below therefore goes through a binary
 # both variants ship.
 # ── Tier 1 + 2: liveness and version SHAPE ─────────────────────────────────
-# The JVM prints `-version` to stderr. Digits are the contract: JDK 8 prints
-# `1.8.0_NNN`, 11+ print `11.0.x` … `26.0.x`. Both satisfy \d+\.\d+\.\d+.
+# The JVM prints `-version` to stderr, as `openjdk version "<v>" <date>`.
+# The quoted token is the contract, and it does NOT always carry three
+# components — a `.0` GA prints the major alone:
+#
+#   jdk-26+35        -> openjdk version "26" 2026-03-17
+#   jdk-25.0.4.1+1   -> openjdk version "25.0.4.1"
+#   jdk-21.0.12+8    -> openjdk version "21.0.12"
+#   jdk8u462-b08     -> openjdk version "1.8.0_462"
+#
+# So the assertion is "a quoted, dot-separated numeric token", not a fixed
+# component count — `\d+\.\d+\.\d+` red every leg of every version in one
+# scheduled run the first time a `.0` release entered the plan.
 # `--version` is NOT used: JDK 8 does not have it.
 r_version = ocx.run(JAVA, "-version")
 expect.ok(r_version)
-expect.matches(r_version.stdout + r_version.stderr, r"\d+\.\d+\.\d+")
+expect.matches(r_version.stdout + r_version.stderr, r'version "\d+(\.\d+)*')
 
 # ── Tier 3: a computed result, on input we write ourselves ─────────────────
 # `keytool` is in BOTH the JDK and the JRE bin set on every mirrored major, so
